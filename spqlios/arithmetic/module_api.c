@@ -75,6 +75,8 @@ static void fill_fft64_virtual_table(MODULE* module) {
 static void fill_ntt120_virtual_table(MODULE* module) {
   // TODO add default ref handler here
   // module->func.vec_znx_dft = ...;
+  module->func.bytes_of_vec_znx_dft = ntt120_bytes_of_vec_znx_dft;
+  module->func.bytes_of_vec_znx_big = ntt120_bytes_of_vec_znx_big;
   if (CPU_SUPPORTS("avx2")) {
     // TODO add avx handlers here
     module->func.vec_znx_dft = ntt120_vec_znx_dft_avx;

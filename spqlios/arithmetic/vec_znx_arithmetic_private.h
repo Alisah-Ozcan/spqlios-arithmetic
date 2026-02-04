@@ -168,9 +168,13 @@ struct module_info_t {
 
 EXPORT uint64_t fft64_bytes_of_vec_znx_dft(const MODULE* module,  // N
                                            uint64_t size);
+EXPORT uint64_t ntt120_bytes_of_vec_znx_dft(const MODULE* module,  // N
+                                            uint64_t size);
 
 EXPORT uint64_t fft64_bytes_of_vec_znx_big(const MODULE* module,  // N
                                            uint64_t size);
+EXPORT uint64_t ntt120_bytes_of_vec_znx_big(const MODULE* module,  // N
+                                            uint64_t size);
 
 EXPORT uint64_t fft64_bytes_of_svp_ppol(const MODULE* module);  // N
 

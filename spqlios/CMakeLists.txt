@@ -138,6 +138,9 @@ set(HEADERSPUBLIC
         q120/q120_common.h
         q120/q120_arithmetic.h
         q120/q120_ntt.h
+        gpu/gpu_vector.h
+        gpu/ntt_parameters.cuh
+        gpu/vec_znx_gpu.cuh
         )
 
 # H header files containing the private API (these headers are used internally)
@@ -167,6 +170,12 @@ set(SPQLIOSSOURCES
         ${HEADERSPUBLIC}
         ${HEADERSPRIVATE}
         )
+if (SPQLIOS_ENABLE_GPU)
+    set(SRCS_GPU
+            gpu/vec_znx_gpu.cu
+            gpu/ntt_parameters.cu
+    )
+endif()
 if (${X86})
     set(SPQLIOSSOURCES ${SPQLIOSSOURCES}
             ${SRCS_X86}
@@ -216,6 +225,23 @@ target_link_libraries(libspqlios ${SPQLIOSLIBDEP})
 target_link_libraries(libspqlios-static ${SPQLIOSLIBDEP})
 install(TARGETS libspqlios-static)
 install(TARGETS libspqlios)
+
+if (SPQLIOS_ENABLE_GPU)
+    add_library(libspqlios-gpu STATIC ${SRCS_GPU})
+    set_property(TARGET libspqlios-gpu PROPERTY OUTPUT_NAME spqlios-gpu)
+    set_property(TARGET libspqlios-gpu PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+    target_include_directories(libspqlios-gpu PUBLIC ${PROJECT_SOURCE_DIR})
+    if (TARGET ${SPQLIOS_GPU_NTT_TARGET})
+        target_link_libraries(libspqlios-gpu PUBLIC libspqlios ${SPQLIOS_GPU_NTT_TARGET})
+        target_compile_definitions(libspqlios-gpu PUBLIC SPQLIOS_HAVE_GPUNTT=1)
+    else()
+        message(WARNING "GPU-NTT target '${SPQLIOS_GPU_NTT_TARGET}' not found. "
+                        "libspqlios-gpu will build with stub adapter. "
+                        "Set SPQLIOS_GPU_NTT_SOURCE and SPQLIOS_GPU_NTT_TARGET to enable real GPU-NTT.")
+        target_link_libraries(libspqlios-gpu PUBLIC libspqlios)
+    endif()
+    install(TARGETS libspqlios-gpu)
+endif()
 
 # install the public headers only
 foreach (file ${HEADERSPUBLIC})

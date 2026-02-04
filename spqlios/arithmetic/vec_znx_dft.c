@@ -38,6 +38,12 @@ EXPORT uint64_t fft64_bytes_of_vec_znx_dft(const MODULE* module,  // N
   return module->nn * size * sizeof(double);
 }
 
+// ntt120 backend
+EXPORT uint64_t ntt120_bytes_of_vec_znx_dft(const MODULE* module,  // N
+                                            uint64_t size) {
+  return module->nn * size * 4 * sizeof(uint64_t);
+}
+
 EXPORT VEC_ZNX_DFT* new_vec_znx_dft(const MODULE* module,  // N
                                           uint64_t size) {
   return spqlios_alloc(bytes_of_vec_znx_dft(module, size));
