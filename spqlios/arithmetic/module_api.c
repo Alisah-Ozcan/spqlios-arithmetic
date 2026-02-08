@@ -109,12 +109,16 @@ static void fill_fft64_precomp(MODULE* module) {
   module->mod.fft64.p_addmul = new_reim_fftvec_addmul_precomp(module->m);
   module->mod.fft64.mul_fft = new_reim_fftvec_mul_precomp(module->m);
 }
+
 static void fill_ntt120_precomp(MODULE* module) {
   // fill any necessary precomp stuff
   if (CPU_SUPPORTS("avx2")) {
     module->mod.q120.p_ntt = q120_new_ntt_bb_precomp(module->nn);
     module->mod.q120.p_intt = q120_new_intt_bb_precomp(module->nn);
   }
+#if defined(SPQLIOS_USE_GPU_NTT)
+  module->mod.q120.p_gpu = q120_new_ntt_gpu_precomp(module->nn);
+#endif
 }
 
 static void fill_module_precomp(MODULE* module) {
@@ -158,10 +162,17 @@ EXPORT void delete_module_info(MODULE* mod) {
       free(mod->mod.fft64.p_addmul);
       break;
     case NTT120:
-      if (CPU_SUPPORTS("avx2")) {
+      if (mod->mod.q120.p_ntt) {
         q120_del_ntt_bb_precomp(mod->mod.q120.p_ntt);
+      }
+      if (mod->mod.q120.p_intt) {
         q120_del_intt_bb_precomp(mod->mod.q120.p_intt);
       }
+#if defined(SPQLIOS_USE_GPU_NTT)
+      if (mod->mod.q120.p_gpu) {
+        q120_del_ntt_gpu_precomp(mod->mod.q120.p_gpu);
+      }
+#endif
       break;
     default:
       break;

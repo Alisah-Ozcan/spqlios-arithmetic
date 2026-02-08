@@ -1,5 +1,6 @@
 #include <string.h>
 
+
 #include "../q120/q120_arithmetic.h"
 #include "vec_znx_arithmetic_private.h"
 
@@ -7,6 +8,13 @@ EXPORT void vec_znx_dft(const MODULE* module,                             // N
                         VEC_ZNX_DFT* res, uint64_t res_size,              // res
                         const int64_t* a, uint64_t a_size, uint64_t a_sl  // a
 ) {
+#if defined(SPQLIOS_USE_GPU_NTT)
+  if (module && module->module_type == NTT120 && module->mod.q120.p_gpu) {
+    if (q120_vec_znx_dft_gpu(module, res, res_size, a, a_size, a_sl)) {
+      return;
+    }
+  }
+#endif
   return module->func.vec_znx_dft(module, res, res_size, a, a_size, a_sl);
 }
 
@@ -15,6 +23,13 @@ EXPORT void vec_znx_idft(const MODULE* module,                       // N
                          const VEC_ZNX_DFT* a_dft, uint64_t a_size,  // a
                          uint8_t* tmp                                // scratch space
 ) {
+#if defined(SPQLIOS_USE_GPU_NTT)
+  if (module && module->module_type == NTT120 && module->mod.q120.p_gpu) {
+    if (q120_vec_znx_idft_gpu(module, res, res_size, a_dft, a_size)) {
+      return;
+    }
+  }
+#endif
   return module->func.vec_znx_idft(module, res, res_size, a_dft, a_size, tmp);
 }
 

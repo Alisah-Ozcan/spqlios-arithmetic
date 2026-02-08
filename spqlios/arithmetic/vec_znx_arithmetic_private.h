@@ -5,6 +5,23 @@
 #include "../q120/q120_ntt.h"
 #include "vec_znx_arithmetic.h"
 
+#if defined(SPQLIOS_USE_GPU_NTT) && defined(__CUDACC__)
+#include "../gpu/gpu_vector.h"
+#include "gpuntt/common/modular_arith.cuh"
+struct q120_gpu_module_info_t {
+  uint64_t n;
+  int logn;
+  int mod_count;
+  uint64_t oq[4];
+  VEC_GPU<Root64> ntt_roots;
+  VEC_GPU<Root64> intt_roots;
+  VEC_GPU<Modulus64> moduli;
+  VEC_GPU<Ninverse64> n_inv;
+};
+#elif defined(SPQLIOS_USE_GPU_NTT)
+struct q120_gpu_module_info_t;
+#endif
+
 /**
  * Layouts families:
  *
@@ -50,6 +67,10 @@ struct q120_module_info_t {
   q120_ntt_precomp* p_ntt;
   // pre-computation for q120b to q120b intt
   q120_ntt_precomp* p_intt;
+#if defined(SPQLIOS_USE_GPU_NTT)
+  // GPU pre-computation for q120 NTT (forward/inverse tables)
+  struct q120_gpu_module_info_t* p_gpu;
+#endif
 };
 
 // TODO add function types here
@@ -543,4 +564,15 @@ EXPORT uint64_t fft64_vmp_apply_dft_to_dft_tmp_bytes(const MODULE* module,      
                                                      uint64_t a_size,                // a
                                                      uint64_t nrows, uint64_t ncols  // prep matrix
 );
+
+#if defined(SPQLIOS_USE_GPU_NTT)
+EXPORT struct q120_gpu_module_info_t* q120_new_ntt_gpu_precomp(uint64_t n);
+EXPORT void q120_del_ntt_gpu_precomp(struct q120_gpu_module_info_t* precomp);
+EXPORT int q120_vec_znx_dft_gpu(const MODULE* module, VEC_ZNX_DFT* res, uint64_t res_size,
+                                const int64_t* a, uint64_t a_size, uint64_t a_sl);
+EXPORT int q120_vec_znx_idft_gpu(const MODULE* module, VEC_ZNX_BIG* res, uint64_t res_size,
+                                 const VEC_ZNX_DFT* a_dft, uint64_t a_size);
+EXPORT int q120_vec_gpu_ntt_inplace_raw(const MODULE* module, uint64_t* inout_rns, uint64_t batch_size);
+EXPORT int q120_vec_gpu_intt_inplace_raw(const MODULE* module, uint64_t* inout_rns, uint64_t batch_size);
+#endif
 #endif  // SPQLIOS_VEC_ZNX_ARITHMETIC_PRIVATE_H

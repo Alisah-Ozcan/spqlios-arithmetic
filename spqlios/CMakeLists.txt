@@ -139,8 +139,6 @@ set(HEADERSPUBLIC
         q120/q120_arithmetic.h
         q120/q120_ntt.h
         gpu/gpu_vector.h
-        gpu/ntt_parameters.cuh
-        gpu/vec_znx_gpu.cuh
         )
 
 # H header files containing the private API (these headers are used internally)
@@ -170,11 +168,11 @@ set(SPQLIOSSOURCES
         ${HEADERSPUBLIC}
         ${HEADERSPRIVATE}
         )
-if (SPQLIOS_ENABLE_GPU)
+if (SPQLIOS_USE_GPU_NTT)
     set(SRCS_GPU
             gpu/vec_znx_gpu.cu
-            gpu/ntt_parameters.cu
     )
+    set(SPQLIOSSOURCES ${SPQLIOSSOURCES} ${SRCS_GPU})
 endif()
 if (${X86})
     set(SPQLIOSSOURCES ${SPQLIOSSOURCES}
@@ -217,20 +215,38 @@ set_property(TARGET libspqlios-static PROPERTY OUTPUT_NAME spqlios)
 set_property(TARGET libspqlios PROPERTY POSITION_INDEPENDENT_CODE ON)
 set_property(TARGET libspqlios PROPERTY SOVERSION ${SPQLIOS_VERSION_MAJOR})
 set_property(TARGET libspqlios PROPERTY VERSION ${SPQLIOS_VERSION})
+if (SPQLIOS_USE_GPU_NTT)
+    target_compile_definitions(libspqlios PUBLIC SPQLIOS_USE_GPU_NTT=1)
+    target_compile_definitions(libspqlios-static PUBLIC SPQLIOS_USE_GPU_NTT=1)
+    set_property(TARGET libspqlios PROPERTY CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+    set_property(TARGET libspqlios-static PROPERTY CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+    set_property(TARGET libspqlios PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+    set_property(TARGET libspqlios-static PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+    set_property(TARGET libspqlios PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+    set_property(TARGET libspqlios-static PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+endif()
 if (NOT APPLE)
 target_link_options(libspqlios-static PUBLIC -Wl,--no-undefined)
 target_link_options(libspqlios PUBLIC -Wl,--no-undefined)
 endif()
-target_link_libraries(libspqlios ${SPQLIOSLIBDEP})
-target_link_libraries(libspqlios-static ${SPQLIOSLIBDEP})
+target_link_libraries(libspqlios PUBLIC ${SPQLIOSLIBDEP})
+target_link_libraries(libspqlios-static PUBLIC ${SPQLIOSLIBDEP})
+if (SPQLIOS_USE_GPU_NTT AND TARGET ${SPQLIOS_GPU_NTT_TARGET})
+    target_link_libraries(libspqlios PRIVATE ${SPQLIOS_GPU_NTT_TARGET})
+    target_link_libraries(libspqlios-static PRIVATE ${SPQLIOS_GPU_NTT_TARGET})
+endif()
 install(TARGETS libspqlios-static)
 install(TARGETS libspqlios)
 
-if (SPQLIOS_ENABLE_GPU)
+if (SPQLIOS_USE_GPU_NTT)
     add_library(libspqlios-gpu STATIC ${SRCS_GPU})
     set_property(TARGET libspqlios-gpu PROPERTY OUTPUT_NAME spqlios-gpu)
+    set_property(TARGET libspqlios-gpu PROPERTY CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
     set_property(TARGET libspqlios-gpu PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+    set_property(TARGET libspqlios-gpu PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
     target_include_directories(libspqlios-gpu PUBLIC ${PROJECT_SOURCE_DIR})
+    # Only GPU target sees this macro; CPU libspqlios must not depend on CUDA symbols.
+    target_compile_definitions(libspqlios-gpu PUBLIC SPQLIOS_USE_GPU_NTT=1)
     if (TARGET ${SPQLIOS_GPU_NTT_TARGET})
         target_link_libraries(libspqlios-gpu PUBLIC libspqlios ${SPQLIOS_GPU_NTT_TARGET})
         target_compile_definitions(libspqlios-gpu PUBLIC SPQLIOS_HAVE_GPUNTT=1)

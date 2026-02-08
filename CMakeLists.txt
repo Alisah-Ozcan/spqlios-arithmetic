@@ -3,8 +3,8 @@ project(spqlios)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(SPQLIOS_ENABLE_GPU "Enable CUDA GPU backend (GPU-NTT)" OFF)
-set(SPQLIOS_CUDA_ARCH "75" CACHE STRING "CUDA arch (e.g. 75, 80, 86)")
+option(SPQLIOS_USE_GPU_NTT "Enable CUDA GPU backend (GPU-NTT)" OFF)
+set(SPQLIOS_CUDA_ARCH "75" CACHE STRING "CUDA arch list (e.g. 75, 80, 86, 75;86, or native)")
 set(SPQLIOS_GPU_NTT_SOURCE "" CACHE PATH "Local path to GPU-NTT source (optional)")
 set(SPQLIOS_GPU_NTT_TARGET "GPUNTT::ntt" CACHE STRING "GPU-NTT CMake target name")
 
@@ -69,9 +69,22 @@ message(STATUS "--> X86_WIN32: ${X86_WIN32}")
 message(STATUS "--> X86_LINUX: ${X86}")
 message(STATUS "--> AARCH64: ${AARCH64}")
 
-if (SPQLIOS_ENABLE_GPU)
+if (SPQLIOS_USE_GPU_NTT)
     enable_language(CUDA)
-    set(CMAKE_CUDA_ARCHITECTURES ${SPQLIOS_CUDA_ARCH} CACHE STRING "CUDA architectures" FORCE)
+    # Prefer shared CUDA runtime to avoid static cudart registration issues
+    # when CUDA kernels are linked through shared libraries.
+    set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
+    string(TOLOWER "${SPQLIOS_CUDA_ARCH}" _spqlios_cuda_arch_cfg)
+    if (_spqlios_cuda_arch_cfg STREQUAL "native")
+        # NOTE: In headless/containerized builds, NVCC native may resolve to a single
+        # architecture that does not match runtime GPU. Build a small fat binary set.
+        set(_spqlios_cuda_arches "75;80;86;89")
+        message(WARNING "SPQLIOS_CUDA_ARCH=native detected. Using fat CUDA arch set: ${_spqlios_cuda_arches}")
+    else()
+        string(REPLACE "," ";" _spqlios_cuda_arches "${SPQLIOS_CUDA_ARCH}")
+    endif()
+    set(CMAKE_CUDA_ARCHITECTURES "${_spqlios_cuda_arches}" CACHE STRING "CUDA architectures" FORCE)
+    message(STATUS "SPQLIOS CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
     include(FetchContent)
     if (SPQLIOS_GPU_NTT_SOURCE)
         FetchContent_Declare(
@@ -108,6 +121,9 @@ if (SPQLIOS_ENABLE_GPU)
         message(FATAL_ERROR "GPU-NTT sources not found in ${gpu_ntt_SOURCE_DIR}")
     endif()
     add_library(gpu_ntt_external STATIC ${GPU_NTT_SOURCES})
+    set_property(TARGET gpu_ntt_external PROPERTY POSITION_INDEPENDENT_CODE ON)
+    set_property(TARGET gpu_ntt_external PROPERTY CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+    set_property(TARGET gpu_ntt_external PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
     target_include_directories(gpu_ntt_external PUBLIC ${gpu_ntt_SOURCE_DIR})
     if (EXISTS "${gpu_ntt_SOURCE_DIR}/include")
         target_include_directories(gpu_ntt_external PUBLIC ${gpu_ntt_SOURCE_DIR}/include)
