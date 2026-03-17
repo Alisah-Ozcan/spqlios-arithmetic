@@ -108,6 +108,9 @@ static void fill_fft64_precomp(MODULE* module) {
   module->mod.fft64.p_ifft = new_reim_ifft_precomp(module->m, 0);
   module->mod.fft64.p_addmul = new_reim_fftvec_addmul_precomp(module->m);
   module->mod.fft64.mul_fft = new_reim_fftvec_mul_precomp(module->m);
+#if defined(SPQLIOS_USE_GPU)
+  module->mod.fft64.p_gpu = fft64_new_ffnt_gpu_precomp(module->nn);
+#endif
 }
 
 static void fill_ntt120_precomp(MODULE* module) {
@@ -116,7 +119,7 @@ static void fill_ntt120_precomp(MODULE* module) {
     module->mod.q120.p_ntt = q120_new_ntt_bb_precomp(module->nn);
     module->mod.q120.p_intt = q120_new_intt_bb_precomp(module->nn);
   }
-#if defined(SPQLIOS_USE_GPU_NTT)
+#if defined(SPQLIOS_USE_GPU)
   module->mod.q120.p_gpu = q120_new_ntt_gpu_precomp(module->nn);
 #endif
 }
@@ -160,6 +163,11 @@ EXPORT void delete_module_info(MODULE* mod) {
       free(mod->mod.fft64.p_reim_to_znx);
       free(mod->mod.fft64.mul_fft);
       free(mod->mod.fft64.p_addmul);
+#if defined(SPQLIOS_USE_GPU)
+      if (mod->mod.fft64.p_gpu) {
+        fft64_del_ffnt_gpu_precomp(mod->mod.fft64.p_gpu);
+      }
+#endif
       break;
     case NTT120:
       if (mod->mod.q120.p_ntt) {
@@ -168,7 +176,7 @@ EXPORT void delete_module_info(MODULE* mod) {
       if (mod->mod.q120.p_intt) {
         q120_del_intt_bb_precomp(mod->mod.q120.p_intt);
       }
-#if defined(SPQLIOS_USE_GPU_NTT)
+#if defined(SPQLIOS_USE_GPU)
       if (mod->mod.q120.p_gpu) {
         q120_del_ntt_gpu_precomp(mod->mod.q120.p_gpu);
       }

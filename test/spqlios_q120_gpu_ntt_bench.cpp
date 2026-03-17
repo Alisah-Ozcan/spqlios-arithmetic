@@ -9,14 +9,21 @@
 #include "spqlios/arithmetic/vec_znx_arithmetic_private.h"
 #include "spqlios/q120/q120_common.h"
 
-#if !defined(SPQLIOS_USE_GPU_NTT)
-#error "This benchmark requires SPQLIOS_USE_GPU_NTT=ON"
+#if !defined(SPQLIOS_USE_GPU)
+#error "This benchmark requires SPQLIOS_USE_GPU=ON"
 #endif
 
-#define ARGS \
-  Args({1 << 10, 1})->Args({1 << 11, 1})->Args({1 << 12, 1})->Args({1 << 13, 1})->Args({1 << 14, 1})->Args({1 << 15, 1})->Args({1 << 16, 1})
-
 namespace {
+
+static void apply_gpu_ntt_args(benchmark::internal::Benchmark* bench) {
+  static const int64_t sizes[] = {1 << 10, 1 << 11, 1 << 12, 1 << 13, 1 << 14, 1 << 15, 1 << 16};
+  static const int64_t batches[] = {1, 4, 16, 32, 64};
+  for (int64_t n : sizes) {
+    for (int64_t batch : batches) {
+      bench->Args({n, batch});
+    }
+  }
+}
 
 static uint64_t make_seeded_value(std::mt19937_64& rng, uint64_t q) {
   return rng() % q;
@@ -150,7 +157,7 @@ static void benchmark_gpu_intt_inplace(benchmark::State& state) {
   delete_module_info(module);
 }
 
-BENCHMARK(benchmark_gpu_ntt_inplace)->Name("vec_gpu_ntt_inplace")->ARGS;
-BENCHMARK(benchmark_gpu_intt_inplace)->Name("vec_gpu_intt_inplace")->ARGS;
+BENCHMARK(benchmark_gpu_ntt_inplace)->Name("vec_gpu_ntt_inplace")->Apply(apply_gpu_ntt_args);
+BENCHMARK(benchmark_gpu_intt_inplace)->Name("vec_gpu_intt_inplace")->Apply(apply_gpu_ntt_args);
 
 BENCHMARK_MAIN();

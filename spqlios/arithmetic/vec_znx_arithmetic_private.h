@@ -5,9 +5,18 @@
 #include "../q120/q120_ntt.h"
 #include "vec_znx_arithmetic.h"
 
-#if defined(SPQLIOS_USE_GPU_NTT) && defined(__CUDACC__)
+#if defined(SPQLIOS_USE_GPU) && defined(__CUDACC__)
 #include "../gpu/gpu_vector.h"
+#include "gpufft/complex.cuh"
 #include "gpuntt/common/modular_arith.cuh"
+struct fft64_gpu_module_info_t {
+  uint64_t n;
+  int logn;
+  VEC_GPU<Complex64> root_table;
+  VEC_GPU<Complex64> inverse_root_table;
+  VEC_GPU<Complex64> twist_table;
+  VEC_GPU<Complex64> untwist_table;
+};
 struct q120_gpu_module_info_t {
   uint64_t n;
   int logn;
@@ -18,8 +27,9 @@ struct q120_gpu_module_info_t {
   VEC_GPU<Modulus64> moduli;
   VEC_GPU<Ninverse64> n_inv;
 };
-#elif defined(SPQLIOS_USE_GPU_NTT)
+#elif defined(SPQLIOS_USE_GPU)
 struct q120_gpu_module_info_t;
+struct fft64_gpu_module_info_t;
 #endif
 
 /**
@@ -60,6 +70,10 @@ struct fft64_module_info_t {
   REIM_IFFT_PRECOMP* p_ifft;
   // pre-computation for reim_fftvec_addmul
   REIM_FFTVEC_ADDMUL_PRECOMP* p_addmul;
+#if defined(SPQLIOS_USE_GPU)
+  // GPU pre-computation for fft64 FFNT dispatch
+  struct fft64_gpu_module_info_t* p_gpu;
+#endif
 };
 
 struct q120_module_info_t {
@@ -67,7 +81,7 @@ struct q120_module_info_t {
   q120_ntt_precomp* p_ntt;
   // pre-computation for q120b to q120b intt
   q120_ntt_precomp* p_intt;
-#if defined(SPQLIOS_USE_GPU_NTT)
+#if defined(SPQLIOS_USE_GPU)
   // GPU pre-computation for q120 NTT (forward/inverse tables)
   struct q120_gpu_module_info_t* p_gpu;
 #endif
@@ -565,7 +579,16 @@ EXPORT uint64_t fft64_vmp_apply_dft_to_dft_tmp_bytes(const MODULE* module,      
                                                      uint64_t nrows, uint64_t ncols  // prep matrix
 );
 
-#if defined(SPQLIOS_USE_GPU_NTT)
+#if defined(SPQLIOS_USE_GPU)
+EXPORT struct fft64_gpu_module_info_t* fft64_new_ffnt_gpu_precomp(uint64_t n);
+EXPORT void fft64_del_ffnt_gpu_precomp(struct fft64_gpu_module_info_t* precomp);
+EXPORT int fft64_vec_gpu_dft_raw(const MODULE* module, void* d_freq, const double* d_input, uint64_t batch_size);
+EXPORT int fft64_vec_gpu_idft_raw(const MODULE* module, double* d_output, void* d_freq, uint64_t batch_size);
+EXPORT int fft64_vec_znx_dft_gpu(const MODULE* module, VEC_ZNX_DFT* res, uint64_t res_size, const int64_t* a,
+                                 uint64_t a_size, uint64_t a_sl);
+EXPORT int fft64_vec_znx_idft_gpu(const MODULE* module, VEC_ZNX_BIG* res, uint64_t res_size, const VEC_ZNX_DFT* a_dft,
+                                  uint64_t a_size);
+EXPORT int fft64_znx_small_single_product_gpu(const MODULE* module, int64_t* res, const int64_t* a, const int64_t* b);
 EXPORT struct q120_gpu_module_info_t* q120_new_ntt_gpu_precomp(uint64_t n);
 EXPORT void q120_del_ntt_gpu_precomp(struct q120_gpu_module_info_t* precomp);
 EXPORT int q120_vec_znx_dft_gpu(const MODULE* module, VEC_ZNX_DFT* res, uint64_t res_size,

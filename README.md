@@ -57,19 +57,19 @@ The available options are the following:
 | CMAKE_INSTALL_PREFIX | */usr/local* installation folder (libs go in lib/ and headers in include/) |
 | WARNING_PARANOID     | All warnings are shown and treated as errors. Off by default |
 | ENABLE_TESTING       | Compiles unit tests and integration tests                    |
-| SPQLIOS_USE_GPU_NTT  | Enables CUDA GPU backend for NTT/INTT dispatch (OFF/ON)     |
+| SPQLIOS_USE_GPU      | Enables CUDA GPU backends and fetches GPU-NTT/GPU-FFT (OFF/ON) |
 | SPQLIOS_CUDA_ARCH    | CUDA arch list (for example `75`, `86`, `89`, or `native`)  |
 
 ## Enable GPU Mode
 
-To build with GPU NTT support, configure with:
+To build with GPU support, configure with:
 
 ```bash
-cmake -S . -B build -DSPQLIOS_USE_GPU_NTT=ON -DSPQLIOS_CUDA_ARCH=native
+cmake -S . -B build -DSPQLIOS_USE_GPU=ON -DSPQLIOS_CUDA_ARCH=native
 cmake --build build -j
 ```
 
-When GPU mode is enabled, `vec_znx_dft` and `vec_znx_idft` use the GPU backend for `NTT120` modules when GPU precomputation is available; otherwise they fall back to the CPU implementation.
+When GPU mode is enabled, CMake fetches both GPU-NTT and GPU-FFT. The existing `vec_znx_dft` and `vec_znx_idft` path continues to use the GPU NTT backend for `NTT120` modules when GPU precomputation is available; otherwise they fall back to the CPU implementation.
 
 ------
 

@@ -3,10 +3,12 @@ project(spqlios)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(SPQLIOS_USE_GPU_NTT "Enable CUDA GPU backend (GPU-NTT)" OFF)
+option(SPQLIOS_USE_GPU "Enable CUDA GPU backends (GPU-NTT/GPU-FFT)" OFF)
 set(SPQLIOS_CUDA_ARCH "75" CACHE STRING "CUDA arch list (e.g. 75, 80, 86, 75;86, or native)")
 set(SPQLIOS_GPU_NTT_SOURCE "" CACHE PATH "Local path to GPU-NTT source (optional)")
 set(SPQLIOS_GPU_NTT_TARGET "GPUNTT::ntt" CACHE STRING "GPU-NTT CMake target name")
+set(SPQLIOS_GPU_FFT_SOURCE "" CACHE PATH "Local path to GPU-FFT source (optional)")
+set(SPQLIOS_GPU_FFT_TARGET "GPUFFT::fft" CACHE STRING "GPU-FFT CMake target name")
 
 # read the current version from the manifest file
 file(READ "manifest.yaml" manifest)
@@ -69,7 +71,7 @@ message(STATUS "--> X86_WIN32: ${X86_WIN32}")
 message(STATUS "--> X86_LINUX: ${X86}")
 message(STATUS "--> AARCH64: ${AARCH64}")
 
-if (SPQLIOS_USE_GPU_NTT)
+if (SPQLIOS_USE_GPU)
     enable_language(CUDA)
     # Prefer shared CUDA runtime to avoid static cudart registration issues
     # when CUDA kernels are linked through shared libraries.
@@ -85,57 +87,100 @@ if (SPQLIOS_USE_GPU_NTT)
     endif()
     set(CMAKE_CUDA_ARCHITECTURES "${_spqlios_cuda_arches}" CACHE STRING "CUDA architectures" FORCE)
     message(STATUS "SPQLIOS CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+    if (POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
     include(FetchContent)
-    if (SPQLIOS_GPU_NTT_SOURCE)
-        FetchContent_Declare(
-                gpu_ntt
-                SOURCE_DIR ${SPQLIOS_GPU_NTT_SOURCE}
-        )
-    else()
-        FetchContent_Declare(
-                gpu_ntt
-                GIT_REPOSITORY https://github.com/Alisah-Ozcan/GPU-NTT.git
-                GIT_TAG main
-        )
-    endif()
-    FetchContent_Populate(gpu_ntt)
-    set(SPQLIOS_GPU_NTT_FETCHED_DIR ${gpu_ntt_SOURCE_DIR} CACHE INTERNAL "GPU-NTT source dir")
-    set(SPQLIOS_HAVE_GPUNTT ON)
+    function(spqlios_add_gpu_dependency dep_name dep_source_var dep_target_var dep_fetched_dir_var dep_git_repository dep_git_tag)
+        if (${dep_source_var})
+            FetchContent_Declare(
+                    ${dep_name}
+                    SOURCE_DIR "${${dep_source_var}}"
+            )
+        else()
+            FetchContent_Declare(
+                    ${dep_name}
+                    GIT_REPOSITORY ${dep_git_repository}
+                    GIT_TAG ${dep_git_tag}
+            )
+        endif()
 
-    # Build a local target directly from fetched sources (no external target name required)
-    file(GLOB_RECURSE GPU_NTT_SOURCES CONFIGURE_DEPENDS
-            "${gpu_ntt_SOURCE_DIR}/*.cu"
-            "${gpu_ntt_SOURCE_DIR}/*.c"
-            "${gpu_ntt_SOURCE_DIR}/*.cpp"
+        FetchContent_GetProperties(${dep_name})
+        if (NOT ${dep_name}_POPULATED)
+            FetchContent_Populate(${dep_name})
+        endif()
+
+        string(CONCAT dep_source_dir_var "${dep_name}" "_SOURCE_DIR")
+        set(dep_source_dir "${${dep_source_dir_var}}")
+        set(${dep_fetched_dir_var} "${dep_source_dir}" CACHE INTERNAL "${dep_name} source dir" FORCE)
+
+        file(GLOB_RECURSE dep_sources CONFIGURE_DEPENDS
+                "${dep_source_dir}/*.cu"
+                "${dep_source_dir}/*.c"
+                "${dep_source_dir}/*.cc"
+                "${dep_source_dir}/*.cpp"
+                "${dep_source_dir}/*.cxx"
+        )
+        foreach (pat ".*[/\\\\]test[/\\\\].*"
+                     ".*[/\\\\]tests[/\\\\].*"
+                     ".*[/\\\\]example[/\\\\].*"
+                     ".*[/\\\\]examples[/\\\\].*"
+                     ".*[/\\\\]benchmark[/\\\\].*"
+                     ".*[/\\\\]benchmarks[/\\\\].*"
+                     ".*[/\\\\]docs[/\\\\].*")
+            list(FILTER dep_sources EXCLUDE REGEX "${pat}")
+        endforeach()
+
+        if (dep_sources STREQUAL "")
+            message(FATAL_ERROR "${dep_name}: no buildable sources found in ${dep_source_dir}")
+        endif()
+
+        set(dep_target "${dep_name}_external")
+        add_library(${dep_target} STATIC ${dep_sources})
+        set_property(TARGET ${dep_target} PROPERTY POSITION_INDEPENDENT_CODE ON)
+        set_property(TARGET ${dep_target} PROPERTY CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+        set_property(TARGET ${dep_target} PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+        set_property(TARGET ${dep_target} PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+        target_include_directories(${dep_target} PUBLIC "${dep_source_dir}")
+        if (EXISTS "${dep_source_dir}/include")
+            target_include_directories(${dep_target} PUBLIC "${dep_source_dir}/include")
+        endif()
+        if (EXISTS "${dep_source_dir}/src/include")
+            target_include_directories(${dep_target} PUBLIC "${dep_source_dir}/src/include")
+        endif()
+        if (EXISTS "${dep_source_dir}/src")
+            target_include_directories(${dep_target} PUBLIC "${dep_source_dir}/src")
+        endif()
+        set(${dep_target_var} "${dep_target}" CACHE INTERNAL "${dep_name} target" FORCE)
+    endfunction()
+
+    spqlios_add_gpu_dependency(
+            gpu_ntt
+            SPQLIOS_GPU_NTT_SOURCE
+            SPQLIOS_GPU_NTT_TARGET
+            SPQLIOS_GPU_NTT_FETCHED_DIR
+            https://github.com/Alisah-Ozcan/GPU-NTT.git
+            main
     )
-    foreach (pat ".*[/\\\\]test[/\\\\].*"
-                 ".*[/\\\\]tests[/\\\\].*"
-                 ".*[/\\\\]example[/\\\\].*"
-                 ".*[/\\\\]examples[/\\\\].*"
-                 ".*[/\\\\]benchmark[/\\\\].*"
-                 ".*[/\\\\]benchmarks[/\\\\].*"
-                 ".*[/\\\\]docs[/\\\\].*")
-        list(FILTER GPU_NTT_SOURCES EXCLUDE REGEX "${pat}")
-    endforeach()
-    if (GPU_NTT_SOURCES STREQUAL "")
-        message(FATAL_ERROR "GPU-NTT sources not found in ${gpu_ntt_SOURCE_DIR}")
+    spqlios_add_gpu_dependency(
+            gpu_fft
+            SPQLIOS_GPU_FFT_SOURCE
+            SPQLIOS_GPU_FFT_TARGET
+            SPQLIOS_GPU_FFT_FETCHED_DIR
+            https://github.com/Alisah-Ozcan/GPU-FFT.git
+            main
+    )
+
+    set(SPQLIOS_GPU_EXTERNAL_TARGETS "")
+    if (TARGET ${SPQLIOS_GPU_NTT_TARGET})
+        list(APPEND SPQLIOS_GPU_EXTERNAL_TARGETS ${SPQLIOS_GPU_NTT_TARGET})
+        set(SPQLIOS_HAVE_GPUNTT ON)
     endif()
-    add_library(gpu_ntt_external STATIC ${GPU_NTT_SOURCES})
-    set_property(TARGET gpu_ntt_external PROPERTY POSITION_INDEPENDENT_CODE ON)
-    set_property(TARGET gpu_ntt_external PROPERTY CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
-    set_property(TARGET gpu_ntt_external PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
-    target_include_directories(gpu_ntt_external PUBLIC ${gpu_ntt_SOURCE_DIR})
-    if (EXISTS "${gpu_ntt_SOURCE_DIR}/include")
-        target_include_directories(gpu_ntt_external PUBLIC ${gpu_ntt_SOURCE_DIR}/include)
+    if (TARGET ${SPQLIOS_GPU_FFT_TARGET})
+        list(APPEND SPQLIOS_GPU_EXTERNAL_TARGETS ${SPQLIOS_GPU_FFT_TARGET})
+        set(SPQLIOS_HAVE_GPUFFT ON)
     endif()
-    if (EXISTS "${gpu_ntt_SOURCE_DIR}/src/include")
-        target_include_directories(gpu_ntt_external PUBLIC ${gpu_ntt_SOURCE_DIR}/src/include)
-    endif()
-    if (EXISTS "${gpu_ntt_SOURCE_DIR}/src")
-        target_include_directories(gpu_ntt_external PUBLIC ${gpu_ntt_SOURCE_DIR}/src)
-    endif()
-    set_property(TARGET gpu_ntt_external PROPERTY CUDA_SEPARABLE_COMPILATION ON)
-    set(SPQLIOS_GPU_NTT_TARGET gpu_ntt_external CACHE INTERNAL "GPU-NTT target" FORCE)
+    set(SPQLIOS_GPU_EXTERNAL_TARGETS "${SPQLIOS_GPU_EXTERNAL_TARGETS}" CACHE INTERNAL "GPU dependency targets" FORCE)
 endif()
 
 # compiles the main library in spqlios

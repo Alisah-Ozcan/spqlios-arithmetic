@@ -1,4 +1,5 @@
 #include <cuda_runtime.h>
+#include <cmath>
 #include <exception>
 #include <inttypes.h>
 #include <stdio.h>
@@ -6,12 +7,15 @@
 #include <string.h>
 #include <vector>
 
+#include "gpufft/fft.cuh"
+#include "gpufft/fft_cpu.cuh"
 #include "gpuntt/common/modular_arith.cuh"
 #include "gpuntt/ntt_merge/ntt.cuh"
 #include "vec_znx_gpu.cuh"
 
-extern "C" {
 #include "../arithmetic/vec_znx_arithmetic_private.h"
+
+extern "C" {
 #include "../q120/q120_arithmetic.h"
 #include "../q120/q120_common.h"
 }
@@ -327,6 +331,336 @@ __global__ static void packed_rns_to_znx128_kernel(ulonglong2* dst, const Data64
   }
 
   dst[idx] = make_ulonglong2(acc_lo, acc_hi);
+}
+
+__global__ static void fft64_hadamard_mul_kernel(Complex64* dst, const Complex64* lhs, const Complex64* rhs,
+                                                 uint64_t count) {
+  const uint64_t idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= count) {
+    return;
+  }
+  dst[idx] = lhs[idx] * rhs[idx];
+}
+
+extern "C" EXPORT struct fft64_gpu_module_info_t* fft64_new_ffnt_gpu_precomp(uint64_t n) {
+  try {
+    if (n == 0 || (n & (n - 1)) != 0 || n > (UINT64_C(1) << 16)) {
+      fprintf(stderr, "fft64_new_ffnt_gpu_precomp: invalid n\n");
+      return nullptr;
+    }
+
+    const int logn = log2_u64(n);
+    if (logn < 12 || logn > 24) {
+      return nullptr;
+    }
+
+    auto* precomp = new fft64_gpu_module_info_t();
+    precomp->n = n;
+    precomp->logn = logn;
+
+    gpufft::FFNT<Float64> fft_generator((int)n);
+    std::vector<Complex64> root_table = fft_generator.ReverseRootTable_ffnt();
+    std::vector<Complex64> inverse_root_table = fft_generator.InverseReverseRootTable_ffnt();
+    std::vector<Complex64> twist_table = fft_generator.twist_table_ffnt();
+    std::vector<Complex64> untwist_table = fft_generator.untwist_table_ffnt();
+
+    precomp->root_table.copy_from_host(root_table.data(), root_table.size());
+    precomp->inverse_root_table.copy_from_host(inverse_root_table.data(), inverse_root_table.size());
+    precomp->twist_table.copy_from_host(twist_table.data(), twist_table.size());
+    precomp->untwist_table.copy_from_host(untwist_table.data(), untwist_table.size());
+
+    return precomp;
+  } catch (const std::exception& e) {
+    fprintf(stderr, "fft64_new_ffnt_gpu_precomp: GPU initialization failed: %s\n", e.what());
+    return nullptr;
+  } catch (...) {
+    fprintf(stderr, "fft64_new_ffnt_gpu_precomp: GPU initialization failed with unknown error\n");
+    return nullptr;
+  }
+}
+
+extern "C" EXPORT void fft64_del_ffnt_gpu_precomp(struct fft64_gpu_module_info_t* precomp) { delete precomp; }
+
+extern "C" EXPORT int fft64_vec_gpu_dft_raw(const MODULE* module, void* d_freq, const double* d_input, uint64_t batch_size) {
+  try {
+    if (!module || !d_freq || !d_input || module->module_type != FFT64) {
+      return 0;
+    }
+
+    auto* gpu = module->mod.fft64.p_gpu;
+    if (!gpu || !is_device_accessible_ptr(d_freq) || !is_device_accessible_ptr(d_input)) {
+      return 0;
+    }
+
+    gpufft::fft_configuration<Float64> cfg{};
+    cfg.n_power = gpu->logn;
+    cfg.fft_type = gpufft::FORWARD;
+    cfg.reduction_poly = gpufft::X_N_plus;
+    cfg.zero_padding = false;
+    cfg.mod_inverse = Complex64(0.0, 0.0);
+    cfg.stream = 0;
+
+    gpufft::GPU_FFNT(const_cast<double*>(d_input), reinterpret_cast<Complex64*>(d_freq), gpu->twist_table.data(),
+                     gpu->root_table.data(), cfg, (int)batch_size, false);
+    spqlios_cuda_check(cudaGetLastError(), "GPU_FFNT raw forward launch");
+    return 1;
+  } catch (const std::exception& e) {
+    fprintf(stderr, "fft64_vec_gpu_dft_raw: failure due to: %s\n", e.what());
+    return 0;
+  } catch (...) {
+    fprintf(stderr, "fft64_vec_gpu_dft_raw: failure due to unknown error\n");
+    return 0;
+  }
+}
+
+extern "C" EXPORT int fft64_vec_gpu_idft_raw(const MODULE* module, double* d_output, void* d_freq, uint64_t batch_size) {
+  try {
+    if (!module || !d_output || !d_freq || module->module_type != FFT64) {
+      return 0;
+    }
+
+    auto* gpu = module->mod.fft64.p_gpu;
+    if (!gpu || !is_device_accessible_ptr(d_output) || !is_device_accessible_ptr(d_freq)) {
+      return 0;
+    }
+
+    gpufft::fft_configuration<Float64> cfg{};
+    cfg.n_power = gpu->logn;
+    cfg.fft_type = gpufft::INVERSE;
+    cfg.reduction_poly = gpufft::X_N_plus;
+    cfg.zero_padding = false;
+    cfg.mod_inverse = Complex64(1.0 / (double)module->m, 0.0);
+    cfg.stream = 0;
+
+    gpufft::GPU_FFNT(d_output, reinterpret_cast<Complex64*>(d_freq), gpu->untwist_table.data(),
+                     gpu->inverse_root_table.data(), cfg, (int)batch_size, false);
+    spqlios_cuda_check(cudaGetLastError(), "GPU_FFNT raw inverse launch");
+    return 1;
+  } catch (const std::exception& e) {
+    fprintf(stderr, "fft64_vec_gpu_idft_raw: failure due to: %s\n", e.what());
+    return 0;
+  } catch (...) {
+    fprintf(stderr, "fft64_vec_gpu_idft_raw: failure due to unknown error\n");
+    return 0;
+  }
+}
+
+extern "C" EXPORT int fft64_vec_znx_dft_gpu(const MODULE* module, VEC_ZNX_DFT* res, uint64_t res_size,
+                                            const int64_t* a, uint64_t a_size, uint64_t a_sl) {
+  try {
+    if (!module || !res || !a || module->module_type != FFT64) {
+      return 0;
+    }
+
+    auto* gpu = module->mod.fft64.p_gpu;
+    if (!gpu) {
+      return 0;
+    }
+
+    if (is_device_accessible_ptr(res) || is_device_accessible_ptr(a)) {
+      return 0;
+    }
+
+    const uint64_t nn = module->nn;
+    const uint64_t m = module->m;
+    const uint64_t smin = res_size < a_size ? res_size : a_size;
+    double* const dres = (double*)res;
+
+    if (res_size > smin) {
+      memset(dres + smin * nn, 0, (res_size - smin) * nn * sizeof(double));
+    }
+    if (smin == 0) {
+      return 1;
+    }
+
+    std::vector<double> host_input((size_t)smin * nn);
+    for (uint64_t p = 0; p < smin; p++) {
+      for (uint64_t i = 0; i < nn; i++) {
+        host_input[p * nn + i] = (double)a[p * a_sl + i];
+      }
+    }
+
+    VEC_GPU<double> device_input(host_input.data(), host_input.size());
+    VEC_GPU<Complex64> device_temp((size_t)smin * m);
+
+    if (!fft64_vec_gpu_dft_raw(module, device_temp.data(), device_input.data(), smin)) {
+      return 0;
+    }
+
+    std::vector<Complex64> host_temp((size_t)smin * m);
+    device_temp.copy_to_host(host_temp.data(), host_temp.size());
+
+    for (uint64_t p = 0; p < smin; p++) {
+      const size_t dft_off = (size_t)p * nn;
+      const size_t temp_off = (size_t)p * m;
+      for (uint64_t i = 0; i < m; i++) {
+        dres[dft_off + i] = host_temp[temp_off + i].real();
+        dres[dft_off + m + i] = host_temp[temp_off + i].imag();
+      }
+    }
+
+    return 1;
+  } catch (const std::exception& e) {
+    fprintf(stderr, "fft64_vec_znx_dft_gpu: fallback to CPU due to: %s\n", e.what());
+    if (strstr(e.what(), "invalid device function") != nullptr) {
+      fprintf(stderr,
+              "fft64_vec_znx_dft_gpu: hint: CUDA arch mismatch. Reconfigure with matching -DSPQLIOS_CUDA_ARCH.\n");
+    }
+    return 0;
+  } catch (...) {
+    fprintf(stderr, "fft64_vec_znx_dft_gpu: fallback to CPU due to unknown error\n");
+    return 0;
+  }
+}
+
+extern "C" EXPORT int fft64_vec_znx_idft_gpu(const MODULE* module, VEC_ZNX_BIG* res, uint64_t res_size,
+                                             const VEC_ZNX_DFT* a_dft, uint64_t a_size) {
+  try {
+    if (!module || !res || !a_dft || module->module_type != FFT64) {
+      return 0;
+    }
+
+    auto* gpu = module->mod.fft64.p_gpu;
+    if (!gpu) {
+      return 0;
+    }
+
+    if (is_device_accessible_ptr(res) || is_device_accessible_ptr(a_dft)) {
+      return 0;
+    }
+
+    const uint64_t nn = module->nn;
+    const uint64_t m = module->m;
+    const uint64_t smin = res_size < a_size ? res_size : a_size;
+    int64_t* const dres = (int64_t*)res;
+
+    if (res_size > smin) {
+      memset(dres + smin * nn, 0, (res_size - smin) * nn * sizeof(*dres));
+    }
+    if (smin == 0) {
+      return 1;
+    }
+
+    const double* const src = (const double*)a_dft;
+    std::vector<Complex64> host_temp((size_t)smin * m);
+    for (uint64_t p = 0; p < smin; p++) {
+      const size_t dft_off = (size_t)p * nn;
+      const size_t temp_off = (size_t)p * m;
+      for (uint64_t i = 0; i < m; i++) {
+        host_temp[temp_off + i] = Complex64(src[dft_off + i], src[dft_off + m + i]);
+      }
+    }
+
+    VEC_GPU<Complex64> device_temp(host_temp.data(), host_temp.size());
+    VEC_GPU<double> device_output((size_t)smin * nn);
+
+    if (!fft64_vec_gpu_idft_raw(module, device_output.data(), device_temp.data(), smin)) {
+      return 0;
+    }
+
+    std::vector<double> host_output((size_t)smin * nn);
+    device_output.copy_to_host(host_output.data(), host_output.size());
+    for (uint64_t i = 0; i < (uint64_t)host_output.size(); i++) {
+      dres[i] = (int64_t)std::llround(host_output[i]);
+    }
+
+    return 1;
+  } catch (const std::exception& e) {
+    fprintf(stderr, "fft64_vec_znx_idft_gpu: fallback to CPU due to: %s\n", e.what());
+    if (strstr(e.what(), "invalid device function") != nullptr) {
+      fprintf(stderr,
+              "fft64_vec_znx_idft_gpu: hint: CUDA arch mismatch. Reconfigure with matching -DSPQLIOS_CUDA_ARCH.\n");
+    }
+    return 0;
+  } catch (...) {
+    fprintf(stderr, "fft64_vec_znx_idft_gpu: fallback to CPU due to unknown error\n");
+    return 0;
+  }
+}
+
+extern "C" EXPORT int fft64_znx_small_single_product_gpu(const MODULE* module, int64_t* res, const int64_t* a,
+                                                         const int64_t* b) {
+  try {
+    if (!module || !res || !a || !b || module->module_type != FFT64) {
+      return 0;
+    }
+
+    auto* gpu = module->mod.fft64.p_gpu;
+    if (!gpu) {
+      return 0;
+    }
+
+    if (is_device_accessible_ptr(res) || is_device_accessible_ptr(a) || is_device_accessible_ptr(b)) {
+      return 0;
+    }
+
+    const uint64_t nn = module->nn;
+    const uint64_t m = module->m;
+
+    std::vector<double> host_input_a(nn);
+    std::vector<double> host_input_b(nn);
+    for (uint64_t i = 0; i < nn; i++) {
+      host_input_a[i] = (double)a[i];
+      host_input_b[i] = (double)b[i];
+    }
+
+    VEC_GPU<double> device_input_a(host_input_a.data(), host_input_a.size());
+    VEC_GPU<double> device_input_b(host_input_b.data(), host_input_b.size());
+    VEC_GPU<Complex64> device_freq_a(m);
+    VEC_GPU<Complex64> device_freq_b(m);
+    VEC_GPU<Complex64> device_freq_mul(m);
+    VEC_GPU<double> device_output(nn);
+
+    gpufft::fft_configuration<Float64> cfg_fft{};
+    cfg_fft.n_power = gpu->logn;
+    cfg_fft.fft_type = gpufft::FORWARD;
+    cfg_fft.reduction_poly = gpufft::X_N_plus;
+    cfg_fft.zero_padding = false;
+    cfg_fft.mod_inverse = Complex64(0.0, 0.0);
+    cfg_fft.stream = 0;
+
+    gpufft::GPU_FFNT(device_input_a.data(), device_freq_a.data(), gpu->twist_table.data(), gpu->root_table.data(),
+                     cfg_fft, 1, false);
+    spqlios_cuda_check(cudaGetLastError(), "GPU_FFNT forward(a) launch");
+    gpufft::GPU_FFNT(device_input_b.data(), device_freq_b.data(), gpu->twist_table.data(), gpu->root_table.data(),
+                     cfg_fft, 1, false);
+    spqlios_cuda_check(cudaGetLastError(), "GPU_FFNT forward(b) launch");
+
+    const uint32_t block = 256;
+    const uint32_t grid = (uint32_t)((m + block - 1) / block);
+    fft64_hadamard_mul_kernel<<<grid, block>>>(device_freq_mul.data(), device_freq_a.data(), device_freq_b.data(), m);
+    spqlios_cuda_check(cudaGetLastError(), "fft64_hadamard_mul_kernel launch");
+
+    gpufft::fft_configuration<Float64> cfg_ifft{};
+    cfg_ifft.n_power = gpu->logn;
+    cfg_ifft.fft_type = gpufft::INVERSE;
+    cfg_ifft.reduction_poly = gpufft::X_N_plus;
+    cfg_ifft.zero_padding = false;
+    cfg_ifft.mod_inverse = Complex64(1.0 / (double)m, 0.0);
+    cfg_ifft.stream = 0;
+
+    gpufft::GPU_FFNT(device_output.data(), device_freq_mul.data(), gpu->untwist_table.data(),
+                     gpu->inverse_root_table.data(), cfg_ifft, 1, false);
+    spqlios_cuda_check(cudaGetLastError(), "GPU_FFNT inverse(product) launch");
+
+    std::vector<double> host_output(nn);
+    device_output.copy_to_host(host_output.data(), host_output.size());
+    for (uint64_t i = 0; i < nn; i++) {
+      res[i] = (int64_t)std::llround(host_output[i]);
+    }
+
+    return 1;
+  } catch (const std::exception& e) {
+    fprintf(stderr, "fft64_znx_small_single_product_gpu: fallback due to: %s\n", e.what());
+    if (strstr(e.what(), "invalid device function") != nullptr) {
+      fprintf(stderr,
+              "fft64_znx_small_single_product_gpu: hint: CUDA arch mismatch. Reconfigure with matching -DSPQLIOS_CUDA_ARCH.\n");
+    }
+    return 0;
+  } catch (...) {
+    fprintf(stderr, "fft64_znx_small_single_product_gpu: fallback due to unknown error\n");
+    return 0;
+  }
 }
 
 extern "C" EXPORT struct q120_gpu_module_info_t* q120_new_ntt_gpu_precomp(uint64_t n) {

@@ -8,7 +8,12 @@ EXPORT void vec_znx_dft(const MODULE* module,                             // N
                         VEC_ZNX_DFT* res, uint64_t res_size,              // res
                         const int64_t* a, uint64_t a_size, uint64_t a_sl  // a
 ) {
-#if defined(SPQLIOS_USE_GPU_NTT)
+#if defined(SPQLIOS_USE_GPU)
+  if (module && module->module_type == FFT64 && module->mod.fft64.p_gpu) {
+    if (fft64_vec_znx_dft_gpu(module, res, res_size, a, a_size, a_sl)) {
+      return;
+    }
+  }
   if (module && module->module_type == NTT120 && module->mod.q120.p_gpu) {
     if (q120_vec_znx_dft_gpu(module, res, res_size, a, a_size, a_sl)) {
       return;
@@ -23,7 +28,12 @@ EXPORT void vec_znx_idft(const MODULE* module,                       // N
                          const VEC_ZNX_DFT* a_dft, uint64_t a_size,  // a
                          uint8_t* tmp                                // scratch space
 ) {
-#if defined(SPQLIOS_USE_GPU_NTT)
+#if defined(SPQLIOS_USE_GPU)
+  if (module && module->module_type == FFT64 && module->mod.fft64.p_gpu) {
+    if (fft64_vec_znx_idft_gpu(module, res, res_size, a_dft, a_size)) {
+      return;
+    }
+  }
   if (module && module->module_type == NTT120 && module->mod.q120.p_gpu) {
     if (q120_vec_znx_idft_gpu(module, res, res_size, a_dft, a_size)) {
       return;

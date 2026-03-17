@@ -176,11 +176,15 @@ if (X86 OR X86_WIN32)
     target_include_directories(spqlios_reim4_arithmetic_bench PRIVATE ${test_incs})
 endif ()
 
-if (SPQLIOS_USE_GPU_NTT)
+if (SPQLIOS_USE_GPU)
     find_package(CUDAToolkit REQUIRED)
     add_executable(spqlios-q120-gpu-ntt-bench spqlios_q120_gpu_ntt_bench.cpp)
     target_link_libraries(spqlios-q120-gpu-ntt-bench libspqlios ${benchmark_libs} pthread CUDA::cudart)
     target_include_directories(spqlios-q120-gpu-ntt-bench PRIVATE ${test_incs})
+
+    add_executable(spqlios-fft64-gpu-ffnt-bench spqlios_fft64_gpu_ffnt_bench.cpp)
+    target_link_libraries(spqlios-fft64-gpu-ffnt-bench libspqlios ${benchmark_libs} pthread CUDA::cudart)
+    target_include_directories(spqlios-fft64-gpu-ffnt-bench PRIVATE ${test_incs})
 endif ()
 
 if (DEVMODE_INSTALL)
